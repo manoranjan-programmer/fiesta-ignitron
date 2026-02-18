@@ -130,7 +130,7 @@ const Dashboard = () => {
 
         try {
             const response = await axios.post(`${BACKEND_URL}/api/submit-team`, {
-                teamName, bids: selectedBids, selectedData, credits: credsValue, score
+                teamName, selectedBids: selectedBids, selectedData, credits: credsValue, score
             }, { withCredentials: true });
 
             if (response.data.success) setStep(5);
