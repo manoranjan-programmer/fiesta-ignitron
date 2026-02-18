@@ -1,90 +1,68 @@
 require('dotenv').config();
-
 const express = require('express');
 const mongoose = require('mongoose');
 const passport = require('passport');
 const session = require('express-session');
 const cors = require('cors');
-const bcrypt = require('bcryptjs');
+const bcrypt = require('bcryptjs'); 
 
+// Import Models
 const User = require('./models/User');
-const Team = require('./models/Team');
+const Team = require('./models/Team'); 
 
 require('./config/passport')(passport);
 
 const app = express();
 
-/* ============================= */
-/* 1. TRUST PROXY (IMPORTANT)    */
-/* ============================= */
-app.set('trust proxy', 1);
-
-/* ============================= */
-/* 2. CORS CONFIG (FIXED)        */
-/* ============================= */
-app.use(cors({
-    origin: [
-        process.env.FRONTEND_URL,
-        "http://localhost:5173"
-    ],
-    credentials: true
+// 1. CORS Configuration
+app.use(cors({ 
+    origin: process.env.FRONTEND_URL, 
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
-app.use(express.json());
+app.use(express.json()); 
 
-/* ============================= */
-/* 3. SESSION CONFIG (FIXED)     */
-/* ============================= */
+// 2. Session Configuration
 app.use(session({
-    name: "connect.sid",
-    secret: process.env.SESSION_SECRET || "algorithmic_titans_secret",
+    secret: process.env.SESSION_SECRET || 'algorithmic_titans_secret',
     resave: false,
     saveUninitialized: false,
-    proxy: true,
     cookie: {
-        secure: true,        // HTTPS only (Render/Vercel)
-        httpOnly: true,
-        sameSite: "none",    // REQUIRED for cross-domain
-        maxAge: 24 * 60 * 60 * 1000
+        secure: false, // Set to false for localhost
+        sameSite: "lax", 
+        maxAge: 24 * 60 * 60 * 1000 
     }
 }));
 
 app.use(passport.initialize());
 app.use(passport.session());
 
-/* ============================= */
-/* 4. DATABASE                   */
-/* ============================= */
+// MongoDB Connection
 mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log("✅ MongoDB Connected"))
-    .catch(err => console.log("❌ MongoDB Error:", err));
+    .then(() => console.log('✅ MongoDB Connected'))
+    .catch(err => console.log('❌ MongoDB Connection Error:', err));
 
-/* ============================= */
-/* 5. AUTH CHECK                 */
-/* ============================= */
+/* --- NEW: AUTH CHECK ROUTE --- */
+// React calls this on Dashboard load to see if Google login was successful
 app.get('/api/auth/check', (req, res) => {
     if (req.isAuthenticated()) {
-        return res.json({ success: true, user: req.user });
+        res.json({ success: true, user: req.user });
+    } else {
+        res.status(401).json({ success: false });
     }
-    res.status(401).json({ success: false });
 });
 
-/* ============================= */
-/* 6. SIGNUP                     */
-/* ============================= */
+/* --- MANUAL SIGNUP --- */
 app.post('/api/signup', async (req, res) => {
     try {
         const { fullName, email, password } = req.body;
-
-        if (!fullName || !email || !password) {
-            return res.status(400).json({ message: "All fields required" });
-        }
-
         const existingUser = await User.findOne({ email });
-        if (existingUser)
-            return res.status(400).json({ message: "User already exists" });
+        if (existingUser) return res.status(400).json({ message: "User exists" });
 
-        const hashedPassword = await bcrypt.hash(password, 10);
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash(password, salt);
 
         const newUser = new User({
             displayName: fullName,
@@ -93,112 +71,75 @@ app.post('/api/signup', async (req, res) => {
         });
 
         await newUser.save();
-
-        res.json({
-            success: true,
-            message: "Signup successful"
-        });
-
+        res.status(201).json({ success: true, message: "User created" });
     } catch (err) {
-        console.error("Signup error:", err);
-        res.status(500).json({ message: "Signup failed" });
+        res.status(500).json({ message: "Signup error" });
     }
 });
 
-/* ============================= */
-/* 7. LOGIN                      */
-/* ============================= */
+/* --- MANUAL LOGIN --- */
 app.post('/api/login', async (req, res) => {
     try {
         const { email, password } = req.body;
-
         const user = await User.findOne({ email });
-        if (!user)
-            return res.status(400).json({ message: "Invalid credentials" });
+        
+        if (!user || !user.password) return res.status(400).json({ message: "Invalid credentials" });
 
         const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch)
-            return res.status(400).json({ message: "Invalid credentials" });
+        if (!isMatch) return res.status(400).json({ message: "Invalid credentials" });
 
         req.login(user, (err) => {
-            if (err)
-                return res.status(500).json({ message: "Login failed" });
-
-            return res.json({
-                success: true,
-                user: {
-                    id: user._id,
-                    name: user.displayName
-                }
-            });
+            if (err) return res.status(500).json({ message: "Login failed" });
+            return res.json({ success: true, user: { id: user._id, name: user.displayName } });
         });
-
     } catch (err) {
-        console.error(err);
         res.status(500).json({ message: "Login error" });
     }
 });
 
-/* ============================= */
-/* 8. TEAM SUBMIT                */
-/* ============================= */
+/* --- TEAM SUBMISSION --- */
 app.post('/api/submit-team', async (req, res) => {
     try {
-        if (!req.isAuthenticated())
-            return res.status(401).json({ success: false });
+        if (!req.isAuthenticated()) {
+            return res.status(401).json({ success: false, message: "Unauthorized" });
+        }
 
         const { teamName, bids, selectedData, credits, score } = req.body;
-
         const newTeam = new Team({
             user: req.user.id,
-            teamName,
+            teamName: teamName || "Unnamed Team",
             selectedBids: bids,
-            selectedData,
-            credits,
-            score
+            selectedData: selectedData,
+            credits: parseInt(credits) || 0,
+            score: parseFloat(score) || 0
         });
 
         await newTeam.save();
-
-        res.json({ success: true });
-
+        res.json({ success: true, message: "Simulation saved!" });
     } catch (err) {
-        console.error(err);
-        res.status(500).json({ success: false });
+        res.status(500).json({ success: false, message: "Server Error" });
     }
 });
 
-/* ============================= */
-/* 9. LOGOUT                     */
-/* ============================= */
+/* --- LOGOUT --- */
 app.get('/auth/logout', (req, res) => {
-    req.logout(() => {
+    req.logout((err) => {
+        if (err) return res.status(500).json({ message: "Logout error" });
         res.redirect(`${process.env.FRONTEND_URL}/login`);
     });
 });
 
-/* ============================= */
-/* 10. GOOGLE AUTH               */
-/* ============================= */
-app.get('/auth/google',
-    passport.authenticate('google', {
-        scope: ['profile', 'email']
-    })
-);
+/* --- GOOGLE AUTH --- */
+app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
-app.get('/auth/google/callback',
-    passport.authenticate('google', {
-        failureRedirect: `${process.env.FRONTEND_URL}/login`
-    }),
+app.get('/auth/google/callback', 
+    passport.authenticate('google', { failureRedirect: `${process.env.FRONTEND_URL}/login` }),
     (req, res) => {
+        // SUCCESS: Redirect to dashboard
+        // The cookie 'connect.sid' is now set in the browser
         res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
     }
 );
 
-/* ============================= */
-/* SERVER START                  */
-/* ============================= */
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () =>
-    console.log(`🚀 Server running on ${PORT}`)
-);
+app.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
