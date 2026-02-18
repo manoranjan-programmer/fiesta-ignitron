@@ -104,7 +104,7 @@ function App() {
         <Route path="/dashboard" element={<AuthWrapper requireAuth={true}><Dashboard /></AuthWrapper>} />
         
         {/* Default Redirects */}
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </Router>

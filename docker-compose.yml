@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # MongoDB Database
+  mongodb:
+    image: mongo:7.0
+    container_name: fiesta-mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongodb_data:/data/db
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: password123
+    networks:
+      - fiesta-network
+
+  # Backend API
+  backend:
+    build: ./backend
+    container_name: fiesta-backend
+    ports:
+      - "5000:5000"
+    depends_on:
+      - mongodb
+    environment:
+      NODE_ENV: development
+      PORT: 5000
+      MONGO_URI: mongodb://root:password123@mongodb:27017/fiesta?authSource=admin
+      SESSION_SECRET: dev-secret-key-change-in-production
+      FRONTEND_URL: http://localhost:5173
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+    networks:
+      - fiesta-network
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+    command: npm start
+
+  # Frontend (optional - for development)
+  # frontend:
+  #   build: ./frontend
+  #   container_name: fiesta-frontend
+  #   ports:
+  #     - "5173:5173"
+  #   depends_on:
+  #     - backend
+  #   environment:
+  #     VITE_BACKEND_URL: http://backend:5000
+  #   networks:
+  #     - fiesta-network
+  #   volumes:
+  #     - ./frontend:/app
+  #     - /app/node_modules
+
+volumes:
+  mongodb_data:
+
+networks:
+  fiesta-network:
+    driver: bridge
