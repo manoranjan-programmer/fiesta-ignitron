@@ -15,34 +15,36 @@ require('./config/passport')(passport);
 const app = express();
 
 /* ============================= */
-/* 1. TRUST PROXY (REQUIRED)     */
+/* 1. TRUST PROXY (IMPORTANT)    */
 /* ============================= */
 app.set('trust proxy', 1);
 
 /* ============================= */
-/* 2. CORS CONFIG                */
+/* 2. CORS CONFIG (FIXED)        */
 /* ============================= */
 app.use(cors({
-    origin: process.env.FRONTEND_URL,
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE"],
-    allowedHeaders: ["Content-Type", "Authorization"]
+    origin: [
+        process.env.FRONTEND_URL,
+        "http://localhost:5173"
+    ],
+    credentials: true
 }));
 
 app.use(express.json());
 
 /* ============================= */
-/* 3. SESSION CONFIG             */
+/* 3. SESSION CONFIG (FIXED)     */
 /* ============================= */
 app.use(session({
     name: "connect.sid",
     secret: process.env.SESSION_SECRET || "algorithmic_titans_secret",
     resave: false,
     saveUninitialized: false,
+    proxy: true,
     cookie: {
-        secure: true,          // REQUIRED for HTTPS (Vercel/Render)
+        secure: true,        // HTTPS only (Render/Vercel)
         httpOnly: true,
-        sameSite: "none",      // REQUIRED for cross-origin
+        sameSite: "none",    // REQUIRED for cross-domain
         maxAge: 24 * 60 * 60 * 1000
     }
 }));
@@ -51,14 +53,14 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 /* ============================= */
-/* 4. DATABASE CONNECTION        */
+/* 4. DATABASE                   */
 /* ============================= */
 mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log('✅ MongoDB Connected'))
-    .catch(err => console.log('❌ MongoDB Error:', err));
+    .then(() => console.log("✅ MongoDB Connected"))
+    .catch(err => console.log("❌ MongoDB Error:", err));
 
 /* ============================= */
-/* 5. AUTH CHECK ROUTE           */
+/* 5. AUTH CHECK                 */
 /* ============================= */
 app.get('/api/auth/check', (req, res) => {
     if (req.isAuthenticated()) {
@@ -68,11 +70,15 @@ app.get('/api/auth/check', (req, res) => {
 });
 
 /* ============================= */
-/* 6. MANUAL SIGNUP              */
+/* 6. SIGNUP                     */
 /* ============================= */
 app.post('/api/signup', async (req, res) => {
     try {
         const { fullName, email, password } = req.body;
+
+        if (!fullName || !email || !password) {
+            return res.status(400).json({ message: "All fields required" });
+        }
 
         const existingUser = await User.findOne({ email });
         if (existingUser)
@@ -88,19 +94,19 @@ app.post('/api/signup', async (req, res) => {
 
         await newUser.save();
 
-        res.status(201).json({
+        res.json({
             success: true,
-            message: "User created successfully"
+            message: "Signup successful"
         });
 
     } catch (err) {
-        console.log(err);
-        res.status(500).json({ message: "Signup error" });
+        console.error("Signup error:", err);
+        res.status(500).json({ message: "Signup failed" });
     }
 });
 
 /* ============================= */
-/* 7. MANUAL LOGIN               */
+/* 7. LOGIN                      */
 /* ============================= */
 app.post('/api/login', async (req, res) => {
     try {
@@ -128,12 +134,13 @@ app.post('/api/login', async (req, res) => {
         });
 
     } catch (err) {
+        console.error(err);
         res.status(500).json({ message: "Login error" });
     }
 });
 
 /* ============================= */
-/* 8. TEAM SUBMISSION            */
+/* 8. TEAM SUBMIT                */
 /* ============================= */
 app.post('/api/submit-team', async (req, res) => {
     try {
@@ -156,6 +163,7 @@ app.post('/api/submit-team', async (req, res) => {
         res.json({ success: true });
 
     } catch (err) {
+        console.error(err);
         res.status(500).json({ success: false });
     }
 });
@@ -173,7 +181,9 @@ app.get('/auth/logout', (req, res) => {
 /* 10. GOOGLE AUTH               */
 /* ============================= */
 app.get('/auth/google',
-    passport.authenticate('google', { scope: ['profile', 'email'] })
+    passport.authenticate('google', {
+        scope: ['profile', 'email']
+    })
 );
 
 app.get('/auth/google/callback',
@@ -189,4 +199,6 @@ app.get('/auth/google/callback',
 /* SERVER START                  */
 /* ============================= */
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on ${PORT}`));
+app.listen(PORT, () =>
+    console.log(`🚀 Server running on ${PORT}`)
+);
