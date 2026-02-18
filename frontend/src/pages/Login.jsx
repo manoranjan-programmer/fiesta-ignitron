@@ -3,6 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import './Login.css';
 
+/* =========================
+   BACKEND URL
+========================= */
 const BACKEND_URL =
   import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
@@ -12,39 +15,45 @@ const Login = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [checkingAuth, setCheckingAuth] = useState(true);
 
   /* =========================
-     FIX 1 — AUTO LOGIN CHECK
-     (Important for Google login redirect)
+     AUTO LOGIN CHECK
   ========================= */
-
   useEffect(() => {
-    const token = localStorage.getItem('cld_token');
+    const checkAuth = async () => {
+      try {
+        const token = localStorage.getItem('cld_token');
 
-    // already logged in -> go dashboard
-    if (token) {
-      navigate('/dashboard');
-      return;
-    }
+        // already logged in locally
+        if (token) {
+          navigate('/dashboard');
+          return;
+        }
 
-    // check if google session exists
-    axios
-      .get(`${BACKEND_URL}/api/auth/check`, {
-        withCredentials: true
-      })
-      .then(res => {
+        // check backend session (google login)
+        const res = await axios.get(
+          `${BACKEND_URL}/api/auth/check`,
+          { withCredentials: true }
+        );
+
         if (res.data.success) {
-          localStorage.setItem('cld_token', 'google_session_active');
+          localStorage.setItem('cld_token', 'session_active');
           navigate('/dashboard');
         }
-      })
-      .catch(() => {});
+      } catch (err) {
+        // do nothing, stay on login page
+      } finally {
+        setCheckingAuth(false);
+      }
+    };
+
+    checkAuth();
   }, [navigate]);
 
   /* =========================
      MANUAL LOGIN
   ========================= */
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -53,20 +62,22 @@ const Login = () => {
       const response = await axios.post(
         `${BACKEND_URL}/api/login`,
         { email, password },
-        { withCredentials: true }
+        {
+          withCredentials: true,
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
       );
 
       if (response.data.success) {
-        // SAVE LOGIN FLAG
         localStorage.setItem('cld_token', 'manual_session_active');
-
-        console.log("Login Successful");
         navigate('/dashboard');
       }
     } catch (err) {
       setError(
         err.response?.data?.message ||
-        "Invalid email or password"
+        'Invalid email or password'
       );
     }
   };
@@ -74,11 +85,30 @@ const Login = () => {
   /* =========================
      GOOGLE LOGIN
   ========================= */
-
   const handleGoogleLogin = () => {
     window.location.href = `${BACKEND_URL}/auth/google`;
   };
 
+  /* =========================
+     LOADING SCREEN
+  ========================= */
+  if (checkingAuth) {
+    return (
+      <div style={{
+        height: '100vh',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: '18px'
+      }}>
+        Loading...
+      </div>
+    );
+  }
+
+  /* =========================
+     UI
+  ========================= */
   return (
     <div className="login-wrapper">
       <div className="page">
