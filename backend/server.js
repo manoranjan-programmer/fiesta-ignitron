@@ -20,8 +20,9 @@ const app = express();
 app.set('trust proxy', 1);
 
 /* =====================================
-   2. CORS CONFIG (VERY IMPORTANT)
+   2. CORS CONFIG (FINAL FIX)
 ===================================== */
+
 const allowedOrigins = [
   "http://localhost:5173",
   process.env.FRONTEND_URL
@@ -29,15 +30,17 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: function (origin, callback) {
+
     if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) !== -1) {
+
+    if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-    return callback(new Error("CORS not allowed"), false);
+
+    console.log("Blocked CORS Origin:", origin);
+    return callback(new Error("CORS not allowed"));
   },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  credentials: true
 }));
 
 app.use(express.json());
@@ -45,18 +48,15 @@ app.use(express.json());
 /* =====================================
    3. SESSION CONFIG (PRODUCTION SAFE)
 ===================================== */
-const isProduction = process.env.NODE_ENV === "production";
-
 app.use(session({
   name: "connect.sid",
   secret: process.env.SESSION_SECRET || "algorithmic_titans_secret",
   resave: false,
   saveUninitialized: false,
-  proxy: true,
   cookie: {
-    secure: isProduction,        // true on Render
+    secure: true,        // REQUIRED for HTTPS
     httpOnly: true,
-    sameSite: isProduction ? "none" : "lax",
+    sameSite: "none",    // REQUIRED for Vercel ↔ Render
     maxAge: 24 * 60 * 60 * 1000
   }
 }));
@@ -65,20 +65,27 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 /* =====================================
-   4. DATABASE CONNECTION
+   4. DATABASE
 ===================================== */
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => console.log("❌ MongoDB Error:", err));
+  .catch(err => console.log("Mongo Error:", err));
 
 /* =====================================
    5. AUTH CHECK
 ===================================== */
 app.get('/api/auth/check', (req, res) => {
-  if (req.isAuthenticated()) {
-    return res.json({ success: true, user: req.user });
+  try {
+    if (req.isAuthenticated()) {
+      return res.json({
+        success: true,
+        user: req.user
+      });
+    }
+    res.status(401).json({ success: false });
+  } catch (err) {
+    res.status(500).json({ success: false });
   }
-  res.status(401).json({ success: false });
 });
 
 /* =====================================
@@ -147,7 +154,7 @@ app.post('/api/login', async (req, res) => {
 });
 
 /* =====================================
-   8. TEAM SUBMISSION
+   8. TEAM SUBMIT
 ===================================== */
 app.post('/api/submit-team', async (req, res) => {
   try {
@@ -203,4 +210,6 @@ app.get('/auth/google/callback',
    SERVER START
 ===================================== */
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Server running on ${PORT}`));
+app.listen(PORT, () =>
+  console.log(`🚀 Server running on ${PORT}`)
+);
