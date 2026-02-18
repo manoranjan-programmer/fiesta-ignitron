@@ -1,59 +1,60 @@
-require('dotenv').config();
-const express = require('express');
-const mongoose = require('mongoose');
-const passport = require('passport');
-const session = require('express-session');
-const {MongoStore} = require('connect-mongo'); // Ensure connect-mongo is imported correctly
-const cors = require('cors');
-const bcrypt = require('bcryptjs');
+require("dotenv").config();
+const express = require("express");
+const mongoose = require("mongoose");
+const passport = require("passport");
+const session = require("express-session");
+const { MongoStore } = require("connect-mongo");
+const cors = require("cors");
+const bcrypt = require("bcryptjs");
 
-const User = require('./models/User');
-const Team = require('./models/Team');
+const User = require("./models/User");
+const Team = require("./models/Team");
 
-// Configure Passport strategies
-require('./config/passport')(passport);
+require("./config/passport")(passport);
 
 const app = express();
+app.set("trust proxy", 1);
 
 /* =====================================
-   1. PROXY & MIDDLEWARE SETUP
+   BODY PARSER
 ===================================== */
-// Required for secure cookies to work on platforms like Render or Vercel
-app.set('trust proxy', 1);
-
 app.use(express.json());
 
 /* =====================================
-   2. DYNAMIC CORS CONFIGURATION
+   SAFE CORS CONFIG (FIXES YOUR ERROR)
 ===================================== */
+
 const allowedOrigins = [
   "http://localhost:5173",
-  "https://fiesta-ignitron.vercel.app", // Your main domain
-  process.env.FRONTEND_URL // Deployment URL from env
+  "https://fiesta-ignitron.vercel.app",
+  process.env.FRONTEND_URL
 ];
 
-app.use(cors({
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps)
+const corsOptions = {
+  origin: (origin, callback) => {
+    // allow server-to-server / postman / no-origin requests
     if (!origin) return callback(null, true);
-    
-    // Check if origin is in allowed list or is a Vercel preview branch
-    const isAllowed = allowedOrigins.includes(origin) || origin.endsWith(".vercel.app");
-    
-    if (isAllowed) {
-      callback(null, true);
-    } else {
-      console.error(`CORS Blocked for origin: ${origin}`);
-      callback(new Error("CORS not allowed by Algorithmic Titans Server"));
+
+    if (
+      allowedOrigins.includes(origin) ||
+      origin.includes(".vercel.app")
+    ) {
+      return callback(null, true);
     }
+
+    // DO NOT THROW ERROR → causes 500
+    return callback(null, false);
   },
-  credentials: true, // Required to pass session cookies to frontend
+  credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
-}));
+  allowedHeaders: ["Content-Type", "Authorization"]
+};
+
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions)); // VERY IMPORTANT (preflight fix)
 
 /* =====================================
-   3. PERSISTENT SESSION CONFIGURATION
+   SESSION CONFIG (CROSS DOMAIN SAFE)
 ===================================== */
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -61,17 +62,16 @@ app.use(session({
   name: "connect.sid",
   secret: process.env.SESSION_SECRET || "algorithmic_titans_secret",
   resave: false,
-  saveUninitialized: false, // Prevents creating empty sessions
-  // Stores sessions in MongoDB so logins survive server restarts
-  store: MongoStore.create({ 
+  saveUninitialized: false,
+  store: MongoStore.create({
     mongoUrl: process.env.MONGO_URI,
-    ttl: 24 * 60 * 60 // 1 day
+    ttl: 24 * 60 * 60
   }),
   cookie: {
-    secure: isProduction, // Set to true only in production (requires HTTPS)
-    httpOnly: true, // Prevents client-side JS from reading the cookie
-    sameSite: isProduction ? "none" : "lax", // REQUIRED for cross-domain auth
-    maxAge: 24 * 60 * 60 * 1000 // 1 day
+    secure: isProduction,
+    httpOnly: true,
+    sameSite: isProduction ? "none" : "lax",
+    maxAge: 24 * 60 * 60 * 1000
   }
 }));
 
@@ -79,118 +79,108 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 /* =====================================
-   4. DATABASE CONNECTION
+   DATABASE
 ===================================== */
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => console.error("❌ Mongo Connection Error:", err));
+  .catch(err => console.error("❌ Mongo Error:", err));
 
 /* =====================================
-   5. AUTHENTICATION ROUTES
+   AUTH ROUTES
 ===================================== */
 
-// Verify if the user is currently logged in
-app.get('/api/auth/check', (req, res) => {
+app.get("/api/auth/check", (req, res) => {
   if (req.isAuthenticated()) {
     return res.json({ success: true, user: req.user });
   }
   res.status(401).json({ success: false });
 });
 
-// Standard Email/Password Login
-app.post('/api/login', async (req, res) => {
+app.post("/api/login", async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await User.findOne({ email });
-    
-    if (!user || !user.password) {
+
+    if (!user || !user.password)
       return res.status(400).json({ message: "Invalid credentials" });
-    }
 
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
+    if (!isMatch)
       return res.status(400).json({ message: "Invalid credentials" });
-    }
 
     req.login(user, (err) => {
       if (err) return res.status(500).json({ message: "Login failed" });
-      res.json({ 
-        success: true, 
-        user: { id: user._id, name: user.displayName } 
+
+      res.json({
+        success: true,
+        user: { id: user._id, name: user.displayName }
       });
     });
-  } catch (err) {
+
+  } catch {
     res.status(500).json({ message: "Server error during login" });
   }
 });
 
-// User Registration Route
-app.post('/api/signup', async (req, res) => {
+app.post("/api/signup", async (req, res) => {
   try {
     const { fullName, email, password } = req.body;
+
     const existingUser = await User.findOne({ email });
-    if (existingUser) return res.status(400).json({ message: "User already exists" });
+    if (existingUser)
+      return res.status(400).json({ message: "User already exists" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const newUser = new User({
+
+    await User.create({
       displayName: fullName,
       email,
       password: hashedPassword
     });
 
-    await newUser.save();
-    res.status(201).json({ success: true, message: "User created" });
-  } catch (err) {
+    res.status(201).json({ success: true });
+
+  } catch {
     res.status(500).json({ message: "Signup error" });
   }
 });
 
 /* =====================================
-   6. PROTECTED ROUTES
+   PROTECTED ROUTE
 ===================================== */
+app.post("/api/submit-team", async (req, res) => {
+  if (!req.isAuthenticated())
+    return res.status(401).json({ success: false });
 
-app.post('/api/submit-team', async (req, res) => {
-  if (!req.isAuthenticated()) return res.status(401).json({ success: false });
   try {
-    const newTeam = new Team({ ...req.body, user: req.user.id });
-    await newTeam.save();
+    await Team.create({ ...req.body, user: req.user.id });
     res.json({ success: true });
-  } catch (err) {
+  } catch {
     res.status(500).json({ success: false });
   }
 });
 
 /* =====================================
-   7. EXTERNAL AUTH (GOOGLE) & LOGOUT
+   LOGOUT
 ===================================== */
-
-app.get('/auth/logout', (req, res) => {
-  req.logout((err) => {
-    if (err) return res.status(500).json({ message: "Logout failed" });
+app.get("/auth/logout", (req, res) => {
+  req.logout(() => {
     req.session.destroy(() => {
-      res.clearCookie('connect.sid', {
-        path: '/',
+      res.clearCookie("connect.sid", {
+        path: "/",
         secure: isProduction,
-        sameSite: isProduction ? 'none' : 'lax'
+        sameSite: isProduction ? "none" : "lax"
       });
-      res.redirect(`${process.env.FRONTEND_URL || "http://localhost:5173"}/login`);
+
+      res.redirect(`${process.env.FRONTEND_URL}/login`);
     });
   });
 });
 
-app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
-
-app.get('/auth/google/callback',
-  passport.authenticate('google', { failureRedirect: `${process.env.FRONTEND_URL}/login` }),
-  (req, res) => {
-    res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
-  }
-);
-
 /* =====================================
-   8. SERVER START
+   START SERVER
 ===================================== */
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server on ${PORT} | Mode: ${process.env.NODE_ENV || 'development'}`);
-});
+app.listen(PORT, "0.0.0.0", () =>
+  console.log(`🚀 Server running on ${PORT}`)
+);
