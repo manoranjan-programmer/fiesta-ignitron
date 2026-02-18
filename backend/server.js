@@ -1,32 +1,34 @@
 require('dotenv').config();
-
 const express = require('express');
 const mongoose = require('mongoose');
 const passport = require('passport');
 const session = require('express-session');
-const {MongoStore} = require('connect-mongo'); // Added for session persistence
+const {MongoStore} = require('connect-mongo');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 
 const User = require('./models/User');
 const Team = require('./models/Team');
 
+// Configure Passport strategies (Google, Local, etc.)
 require('./config/passport')(passport);
 
 const app = express();
 
 /* =====================================
-   1. TRUST PROXY (CRITICAL FOR RENDER/HEROKU)
+   1. PROXY & MIDDLEWARE SETUP
 ===================================== */
-// This allows secure cookies to be set via proxy servers
+// Required for secure cookies to work on proxy-based platforms like Render or Vercel
 app.set('trust proxy', 1);
 
+app.use(express.json());
+
 /* =====================================
-   2. DYNAMIC CORS CONFIG
+   2. DYNAMIC CORS CONFIGURATION
 ===================================== */
 const allowedOrigins = [
   "http://localhost:5173",
-  process.env.FRONTEND_URL // Example: https://your-site.vercel.app
+  process.env.FRONTEND_URL // Ensure this is https://your-app.vercel.app without a trailing slash
 ];
 
 app.use(cors({
@@ -34,27 +36,20 @@ app.use(cors({
     // Allow requests with no origin (like mobile apps or curl)
     if (!origin) return callback(null, true);
     
-    // Check if the origin is in our allowed list
-    const isAllowed = allowedOrigins.some(allowed => 
-      origin.startsWith(allowed)
-    );
-
-    if (isAllowed) {
+    if (allowedOrigins.includes(origin)) {
       callback(null, true);
     } else {
       console.error(`CORS Blocked for origin: ${origin}`);
-      callback(new Error("Not allowed by CORS"));
+      callback(new Error("CORS not allowed by Algorithmic Titans Server"));
     }
   },
-  credentials: true,
+  credentials: true, // Required to pass session cookies to the frontend
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
 }));
 
-app.use(express.json());
-
 /* =====================================
-   3. SESSION CONFIG (STABLE PROD)
+   3. PERSISTENT SESSION CONFIGURATION
 ===================================== */
 const isProduction = process.env.NODE_ENV === "production";
 
@@ -62,18 +57,17 @@ app.use(session({
   name: "connect.sid",
   secret: process.env.SESSION_SECRET || "algorithmic_titans_secret",
   resave: false,
-  saveUninitialized: false,
-  // This stores sessions in MongoDB so users stay logged in after server refreshes
-  store: MongoStore.create({
+  saveUninitialized: false, // Prevents creating empty sessions
+  // Stores sessions in MongoDB so logins survive server restarts
+  store: MongoStore.create({ 
     mongoUrl: process.env.MONGO_URI,
-    ttl: 24 * 60 * 60 // 1 day
+    ttl: 24 * 60 * 60 // Session valid for 1 day
   }),
   cookie: {
-    secure: isProduction, // true requires HTTPS
-    httpOnly: true,
-    sameSite: isProduction ? "none" : "lax", // "none" required for cross-domain
-    maxAge: 24 * 60 * 60 * 1000,
-    path: '/'
+    secure: isProduction, // Set to true only in production (requires HTTPS)
+    httpOnly: true, // Prevents client-side JS from reading the cookie
+    sameSite: isProduction ? "none" : "lax", // "none" is required for cross-domain auth
+    maxAge: 24 * 60 * 60 * 1000
   }
 }));
 
@@ -81,28 +75,52 @@ app.use(passport.initialize());
 app.use(passport.session());
 
 /* =====================================
-   4. DATABASE
+   4. DATABASE CONNECTION
 ===================================== */
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
   .catch(err => console.error("❌ Mongo Connection Error:", err));
 
 /* =====================================
-   5. ROUTES
+   5. AUTHENTICATION ROUTES
 ===================================== */
 
-// AUTH CHECK
+// Verify if the user is currently logged in
 app.get('/api/auth/check', (req, res) => {
   if (req.isAuthenticated()) {
-    return res.json({
-      success: true,
-      user: { id: req.user._id, name: req.user.displayName, email: req.user.email }
-    });
+    return res.json({ success: true, user: req.user });
   }
-  res.status(401).json({ success: false, message: "Unauthorized" });
+  res.status(401).json({ success: false });
 });
 
-// SIGNUP
+// Standard Email/Password Login
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const user = await User.findOne({ email });
+    
+    if (!user || !user.password) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ message: "Invalid credentials" });
+    }
+
+    req.login(user, (err) => {
+      if (err) return res.status(500).json({ message: "Login failed" });
+      res.json({ 
+        success: true, 
+        user: { id: user._id, name: user.displayName } 
+      });
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Server error during login" });
+  }
+});
+
+// User Registration Route
 app.post('/api/signup', async (req, res) => {
   try {
     const { fullName, email, password } = req.body;
@@ -123,47 +141,15 @@ app.post('/api/signup', async (req, res) => {
   }
 });
 
-// LOGIN
-app.post('/api/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email });
-    
-    if (!user || !user.password) 
-      return res.status(400).json({ message: "Invalid credentials" });
+/* =====================================
+   6. PROTECTED ROUTES
+===================================== */
 
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch)
-      return res.status(400).json({ message: "Invalid credentials" });
-
-    req.login(user, (err) => {
-      if (err) return res.status(500).json({ message: "Login failed" });
-      res.json({
-        success: true,
-        user: { id: user._id, name: user.displayName }
-      });
-    });
-  } catch (err) {
-    res.status(500).json({ message: "Login error" });
-  }
-});
-
-// TEAM SUBMIT
+// Submit team data (Authenticated only)
 app.post('/api/submit-team', async (req, res) => {
+  if (!req.isAuthenticated()) return res.status(401).json({ success: false });
   try {
-    if (!req.isAuthenticated())
-      return res.status(401).json({ success: false, message: "Unauthorized" });
-
-    const { teamName, bids, selectedData, credits, score } = req.body;
-    const newTeam = new Team({
-      user: req.user.id,
-      teamName,
-      selectedBids: bids,
-      selectedData,
-      credits,
-      score
-    });
-
+    const newTeam = new Team({ ...req.body, user: req.user.id });
     await newTeam.save();
     res.json({ success: true });
   } catch (err) {
@@ -171,42 +157,33 @@ app.post('/api/submit-team', async (req, res) => {
   }
 });
 
-// LOGOUT
+/* =====================================
+   7. EXTERNAL AUTH (GOOGLE) & LOGOUT
+===================================== */
+
 app.get('/auth/logout', (req, res) => {
   req.logout((err) => {
     if (err) return res.status(500).json({ message: "Logout failed" });
     req.session.destroy(() => {
-      res.clearCookie('connect.sid', {
-        path: '/',
-        domain: isProduction ? '.yourdomain.com' : 'localhost', // Optional: adjust if needed
-        secure: isProduction,
-        sameSite: isProduction ? 'none' : 'lax'
-      });
-      const redirectUrl = process.env.FRONTEND_URL || "http://localhost:5173";
-      res.redirect(`${redirectUrl}/login`);
+      res.clearCookie('connect.sid');
+      res.redirect(`${process.env.FRONTEND_URL || "http://localhost:5173"}/login`);
     });
   });
 });
 
-// GOOGLE AUTH
-app.get('/auth/google',
-  passport.authenticate('google', { scope: ['profile', 'email'] })
-);
+app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
 app.get('/auth/google/callback',
-  passport.authenticate('google', {
-    failureRedirect: `${process.env.FRONTEND_URL || "http://localhost:5173"}/login`
-  }),
+  passport.authenticate('google', { failureRedirect: `${process.env.FRONTEND_URL}/login` }),
   (req, res) => {
-    res.redirect(`${process.env.FRONTEND_URL || "http://localhost:5173"}/dashboard`);
+    res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
   }
 );
 
 /* =====================================
-   SERVER START
+   8. SERVER START
 ===================================== */
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🌍 Mode: ${isProduction ? 'Production' : 'Development'}`);
+  console.log(`🚀 Server on ${PORT} | Mode: ${process.env.NODE_ENV || 'development'}`);
 });
