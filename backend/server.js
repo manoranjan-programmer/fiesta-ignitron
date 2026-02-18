@@ -3,14 +3,14 @@ const express = require('express');
 const mongoose = require('mongoose');
 const passport = require('passport');
 const session = require('express-session');
-const {MongoStore} = require('connect-mongo');
+const {MongoStore} = require('connect-mongo'); // Ensure connect-mongo is imported correctly
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 
 const User = require('./models/User');
 const Team = require('./models/Team');
 
-// Configure Passport strategies (Google, Local, etc.)
+// Configure Passport strategies
 require('./config/passport')(passport);
 
 const app = express();
@@ -18,7 +18,7 @@ const app = express();
 /* =====================================
    1. PROXY & MIDDLEWARE SETUP
 ===================================== */
-// Required for secure cookies to work on proxy-based platforms like Render or Vercel
+// Required for secure cookies to work on platforms like Render or Vercel
 app.set('trust proxy', 1);
 
 app.use(express.json());
@@ -28,22 +28,26 @@ app.use(express.json());
 ===================================== */
 const allowedOrigins = [
   "http://localhost:5173",
-  process.env.FRONTEND_URL // Ensure this is https://your-app.vercel.app without a trailing slash
+  "https://fiesta-ignitron.vercel.app", // Your main domain
+  process.env.FRONTEND_URL // Deployment URL from env
 ];
 
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl)
+    // Allow requests with no origin (like mobile apps)
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.includes(origin)) {
+    // Check if origin is in allowed list or is a Vercel preview branch
+    const isAllowed = allowedOrigins.includes(origin) || origin.endsWith(".vercel.app");
+    
+    if (isAllowed) {
       callback(null, true);
     } else {
       console.error(`CORS Blocked for origin: ${origin}`);
       callback(new Error("CORS not allowed by Algorithmic Titans Server"));
     }
   },
-  credentials: true, // Required to pass session cookies to the frontend
+  credentials: true, // Required to pass session cookies to frontend
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
 }));
@@ -61,13 +65,13 @@ app.use(session({
   // Stores sessions in MongoDB so logins survive server restarts
   store: MongoStore.create({ 
     mongoUrl: process.env.MONGO_URI,
-    ttl: 24 * 60 * 60 // Session valid for 1 day
+    ttl: 24 * 60 * 60 // 1 day
   }),
   cookie: {
     secure: isProduction, // Set to true only in production (requires HTTPS)
     httpOnly: true, // Prevents client-side JS from reading the cookie
-    sameSite: isProduction ? "none" : "lax", // "none" is required for cross-domain auth
-    maxAge: 24 * 60 * 60 * 1000
+    sameSite: isProduction ? "none" : "lax", // REQUIRED for cross-domain auth
+    maxAge: 24 * 60 * 60 * 1000 // 1 day
   }
 }));
 
@@ -145,7 +149,6 @@ app.post('/api/signup', async (req, res) => {
    6. PROTECTED ROUTES
 ===================================== */
 
-// Submit team data (Authenticated only)
 app.post('/api/submit-team', async (req, res) => {
   if (!req.isAuthenticated()) return res.status(401).json({ success: false });
   try {
@@ -165,7 +168,11 @@ app.get('/auth/logout', (req, res) => {
   req.logout((err) => {
     if (err) return res.status(500).json({ message: "Logout failed" });
     req.session.destroy(() => {
-      res.clearCookie('connect.sid');
+      res.clearCookie('connect.sid', {
+        path: '/',
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax'
+      });
       res.redirect(`${process.env.FRONTEND_URL || "http://localhost:5173"}/login`);
     });
   });
