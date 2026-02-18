@@ -3,7 +3,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const passport = require("passport");
 const session = require("express-session");
-const {MongoStore} = require("connect-mongo");
+const { MongoStore } = require("connect-mongo");
 const cors = require("cors");
 const bcrypt = require("bcryptjs");
 
@@ -17,7 +17,7 @@ app.set("trust proxy", 1);
 app.use(express.json());
 
 /* =====================================
-   CORS  (DO NOT THROW ERROR)
+   CORS
 ===================================== */
 
 const allowedOrigins = [
@@ -27,11 +27,8 @@ const allowedOrigins = [
 
 app.use(cors({
   origin: (origin, callback) => {
-
-    // allow postman / mobile / same-origin
     if (!origin) return callback(null, true);
 
-    // allow main domain + vercel previews
     if (
       allowedOrigins.includes(origin) ||
       origin.endsWith(".vercel.app")
@@ -44,7 +41,7 @@ app.use(cors({
 }));
 
 /* =====================================
-   SESSION  (CROSS DOMAIN COOKIE FIX)
+   SESSION
 ===================================== */
 
 const isProduction = process.env.NODE_ENV === "production";
@@ -90,7 +87,7 @@ app.get("/api/auth/check", (req, res) => {
 });
 
 /* =====================================
-   LOGIN  (IMPORTANT FIX)
+   LOGIN (FIXED SESSION SAVE)
 ===================================== */
 
 app.post("/api/login", async (req, res) => {
@@ -106,22 +103,25 @@ app.post("/api/login", async (req, res) => {
     req.login(user, err => {
       if (err) return res.status(500).json({ message: "Login failed" });
 
-      // ensure cookie stored before response
       req.session.save(() => {
-        res.json({
+        res.status(200).json({
           success: true,
-          user: { id: user._id, name: user.displayName }
+          user: {
+            id: user._id,
+            name: user.displayName,
+            email: user.email
+          }
         });
       });
     });
 
-  } catch {
+  } catch (err) {
     res.status(500).json({ message: "Server error" });
   }
 });
 
 /* =====================================
-   SIGNUP
+   SIGNUP (AUTO LOGIN AFTER REGISTER)
 ===================================== */
 
 app.post("/api/signup", async (req, res) => {
@@ -133,13 +133,26 @@ app.post("/api/signup", async (req, res) => {
 
     const hash = await bcrypt.hash(password, 10);
 
-    await User.create({
+    const newUser = await User.create({
       displayName: fullName,
       email,
       password: hash
     });
 
-    res.status(201).json({ success: true });
+    req.login(newUser, err => {
+      if (err) return res.status(500).json({ message: "Signup login failed" });
+
+      req.session.save(() => {
+        res.status(201).json({
+          success: true,
+          user: {
+            id: newUser._id,
+            name: newUser.displayName,
+            email: newUser.email
+          }
+        });
+      });
+    });
 
   } catch {
     res.status(500).json({ message: "Signup error" });
@@ -159,7 +172,7 @@ app.post("/api/submit-team", async (req, res) => {
 });
 
 /* =====================================
-   LOGOUT (COOKIE CLEAR FIX)
+   LOGOUT (REDIRECT FIXED)
 ===================================== */
 
 app.get("/auth/logout", (req, res) => {
@@ -171,11 +184,14 @@ app.get("/auth/logout", (req, res) => {
         secure: isProduction,
         sameSite: isProduction ? "none" : "lax"
       });
-      res.json({ success: true });
+
+      // redirect to login page after logout
+      res.redirect(`${process.env.FRONTEND_URL}/login`);
     });
   });
 });
 
+/* GOOGLE AUTH (UNCHANGED) */
 app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
 app.get('/auth/google/callback',
@@ -184,7 +200,6 @@ app.get('/auth/google/callback',
     res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
   }
 );
-
 
 /* =====================================
    START SERVER
