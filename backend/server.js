@@ -196,7 +196,7 @@ app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'em
 
 app.get('/auth/google/callback',
   passport.authenticate('google', { failureRedirect: `${process.env.FRONTEND_URL}/login` }),
-  (req, res) => {
+  (_req, res) => {
     res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
   }
 );
