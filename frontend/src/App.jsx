@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import Login from './pages/Login';
 import Signup from './pages/Signup';
 import Dashboard from './pages/Dashboard';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
 
 // Protected Route Wrapper that asks the backend if the session is valid
 const PrivateRoute = ({ children }) => {
@@ -10,7 +11,7 @@ const PrivateRoute = ({ children }) => {
 
   useEffect(() => {
     let mounted = true;
-    fetch('http://localhost:5000/api/auth/check', {
+    fetch(`${BACKEND_URL}/api/auth/check`, {
       method: 'GET',
       credentials: 'include'
     })
