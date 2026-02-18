@@ -4,6 +4,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const passport = require('passport');
 const session = require('express-session');
+const {MongoStore} = require('connect-mongo'); // Added for session persistence
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
 
@@ -15,49 +16,64 @@ require('./config/passport')(passport);
 const app = express();
 
 /* =====================================
-   1. TRUST PROXY (REQUIRED FOR RENDER)
+   1. TRUST PROXY (CRITICAL FOR RENDER/HEROKU)
 ===================================== */
+// This allows secure cookies to be set via proxy servers
 app.set('trust proxy', 1);
 
 /* =====================================
-   2. CORS CONFIG (FINAL FIX)
+   2. DYNAMIC CORS CONFIG
 ===================================== */
-
 const allowedOrigins = [
   "http://localhost:5173",
-  process.env.FRONTEND_URL
+  process.env.FRONTEND_URL // Example: https://your-site.vercel.app
 ];
 
 app.use(cors({
   origin: function (origin, callback) {
-
+    // Allow requests with no origin (like mobile apps or curl)
     if (!origin) return callback(null, true);
+    
+    // Check if the origin is in our allowed list
+    const isAllowed = allowedOrigins.some(allowed => 
+      origin.startsWith(allowed)
+    );
 
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      console.error(`CORS Blocked for origin: ${origin}`);
+      callback(new Error("Not allowed by CORS"));
     }
-
-    console.log("Blocked CORS Origin:", origin);
-    return callback(new Error("CORS not allowed"));
   },
-  credentials: true
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"]
 }));
 
 app.use(express.json());
 
 /* =====================================
-   3. SESSION CONFIG (PRODUCTION SAFE)
+   3. SESSION CONFIG (STABLE PROD)
 ===================================== */
+const isProduction = process.env.NODE_ENV === "production";
+
 app.use(session({
   name: "connect.sid",
   secret: process.env.SESSION_SECRET || "algorithmic_titans_secret",
   resave: false,
   saveUninitialized: false,
+  // This stores sessions in MongoDB so users stay logged in after server refreshes
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGO_URI,
+    ttl: 24 * 60 * 60 // 1 day
+  }),
   cookie: {
-    secure: true,        // REQUIRED for HTTPS
+    secure: isProduction, // true requires HTTPS
     httpOnly: true,
-    sameSite: "none",    // REQUIRED for Vercel ↔ Render
-    maxAge: 24 * 60 * 60 * 1000
+    sameSite: isProduction ? "none" : "lax", // "none" required for cross-domain
+    maxAge: 24 * 60 * 60 * 1000,
+    path: '/'
   }
 }));
 
@@ -69,38 +85,31 @@ app.use(passport.session());
 ===================================== */
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => console.log("Mongo Error:", err));
+  .catch(err => console.error("❌ Mongo Connection Error:", err));
 
 /* =====================================
-   5. AUTH CHECK
+   5. ROUTES
 ===================================== */
+
+// AUTH CHECK
 app.get('/api/auth/check', (req, res) => {
-  try {
-    if (req.isAuthenticated()) {
-      return res.json({
-        success: true,
-        user: req.user
-      });
-    }
-    res.status(401).json({ success: false });
-  } catch (err) {
-    res.status(500).json({ success: false });
+  if (req.isAuthenticated()) {
+    return res.json({
+      success: true,
+      user: { id: req.user._id, name: req.user.displayName, email: req.user.email }
+    });
   }
+  res.status(401).json({ success: false, message: "Unauthorized" });
 });
 
-/* =====================================
-   6. SIGNUP
-===================================== */
+// SIGNUP
 app.post('/api/signup', async (req, res) => {
   try {
     const { fullName, email, password } = req.body;
-
     const existingUser = await User.findOne({ email });
-    if (existingUser)
-      return res.status(400).json({ message: "User already exists" });
+    if (existingUser) return res.status(400).json({ message: "User already exists" });
 
     const hashedPassword = await bcrypt.hash(password, 10);
-
     const newUser = new User({
       displayName: fullName,
       email,
@@ -108,27 +117,19 @@ app.post('/api/signup', async (req, res) => {
     });
 
     await newUser.save();
-
-    res.status(201).json({
-      success: true,
-      message: "User created successfully"
-    });
-
+    res.status(201).json({ success: true, message: "User created" });
   } catch (err) {
-    console.log(err);
     res.status(500).json({ message: "Signup error" });
   }
 });
 
-/* =====================================
-   7. LOGIN
-===================================== */
+// LOGIN
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password } = req.body;
-
     const user = await User.findOne({ email });
-    if (!user)
+    
+    if (!user || !user.password) 
       return res.status(400).json({ message: "Invalid credentials" });
 
     const isMatch = await bcrypt.compare(password, user.password);
@@ -136,33 +137,24 @@ app.post('/api/login', async (req, res) => {
       return res.status(400).json({ message: "Invalid credentials" });
 
     req.login(user, (err) => {
-      if (err)
-        return res.status(500).json({ message: "Login failed" });
-
+      if (err) return res.status(500).json({ message: "Login failed" });
       res.json({
         success: true,
-        user: {
-          id: user._id,
-          name: user.displayName
-        }
+        user: { id: user._id, name: user.displayName }
       });
     });
-
   } catch (err) {
     res.status(500).json({ message: "Login error" });
   }
 });
 
-/* =====================================
-   8. TEAM SUBMIT
-===================================== */
+// TEAM SUBMIT
 app.post('/api/submit-team', async (req, res) => {
   try {
     if (!req.isAuthenticated())
-      return res.status(401).json({ success: false });
+      return res.status(401).json({ success: false, message: "Unauthorized" });
 
     const { teamName, bids, selectedData, credits, score } = req.body;
-
     const newTeam = new Team({
       user: req.user.id,
       teamName,
@@ -173,36 +165,40 @@ app.post('/api/submit-team', async (req, res) => {
     });
 
     await newTeam.save();
-
     res.json({ success: true });
-
   } catch (err) {
     res.status(500).json({ success: false });
   }
 });
 
-/* =====================================
-   9. LOGOUT
-===================================== */
+// LOGOUT
 app.get('/auth/logout', (req, res) => {
-  req.logout(() => {
-    res.redirect(`${process.env.FRONTEND_URL}/login`);
+  req.logout((err) => {
+    if (err) return res.status(500).json({ message: "Logout failed" });
+    req.session.destroy(() => {
+      res.clearCookie('connect.sid', {
+        path: '/',
+        domain: isProduction ? '.yourdomain.com' : 'localhost', // Optional: adjust if needed
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax'
+      });
+      const redirectUrl = process.env.FRONTEND_URL || "http://localhost:5173";
+      res.redirect(`${redirectUrl}/login`);
+    });
   });
 });
 
-/* =====================================
-   10. GOOGLE AUTH
-===================================== */
+// GOOGLE AUTH
 app.get('/auth/google',
   passport.authenticate('google', { scope: ['profile', 'email'] })
 );
 
 app.get('/auth/google/callback',
   passport.authenticate('google', {
-    failureRedirect: `${process.env.FRONTEND_URL}/login`
+    failureRedirect: `${process.env.FRONTEND_URL || "http://localhost:5173"}/login`
   }),
   (req, res) => {
-    res.redirect(`${process.env.FRONTEND_URL}/dashboard`);
+    res.redirect(`${process.env.FRONTEND_URL || "http://localhost:5173"}/dashboard`);
   }
 );
 
@@ -210,6 +206,7 @@ app.get('/auth/google/callback',
    SERVER START
 ===================================== */
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () =>
-  console.log(`🚀 Server running on ${PORT}`)
-);
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🌍 Mode: ${isProduction ? 'Production' : 'Development'}`);
+});

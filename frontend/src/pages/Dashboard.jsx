@@ -4,7 +4,7 @@ import axios from 'axios';
 import './Login.css';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'http://localhost:5000';
-// Complete Data Matrix
+
 const tiers = [
     { title: "Tier 1 – Elite", items: [
         { name: "TimSort", scores: [9, 9, 10, 8, 9, 8, 9, 7, 9, 9] },
@@ -64,26 +64,28 @@ const datasets = [
 
 const Dashboard = () => {
     const navigate = useNavigate();
+    const [isCheckingAuth, setIsCheckingAuth] = useState(true); // Added loading state
     const [step, setStep] = useState(1);
     const [teamName, setTeamName] = useState('');
     const [selectedBids, setSelectedBids] = useState([]);
     const [selectedData, setSelectedData] = useState([]);
-    const [credits, setCredits] = useState(0);
+    const [credits, setCredits] = useState('');
     const [finalScore, setFinalScore] = useState(null);
     const [isLoading, setIsLoading] = useState(false);
 
-    // FIX: Verify Google session on component mount
     useEffect(() => {
         const checkAuth = async () => {
             try {
                 const res = await axios.get(`${BACKEND_URL}/api/auth/check`, { withCredentials: true });
                 if (res.data.success) {
-                    // Set token to stay on dashboard
                     localStorage.setItem('cld_token', 'google_active');
                 }
             } catch (err) {
-                // If not manual logged in and check fails, go to login
-                if (!localStorage.getItem('cld_token')) navigate('/login');
+                if (!localStorage.getItem('cld_token')) {
+                    navigate('/login');
+                }
+            } finally {
+                setIsCheckingAuth(false); // Finish loading
             }
         };
         checkAuth();
@@ -104,7 +106,7 @@ const Dashboard = () => {
     const handleFinalCalculation = async () => {
         setIsLoading(true);
         let algorithmTotal = 0;
-        const credsValue = parseInt(credits) || 0;
+        const credsValue = parseFloat(credits) || 0;
 
         selectedBids.forEach(bidName => {
             let foundItem = null;
@@ -116,7 +118,9 @@ const Dashboard = () => {
             if (foundItem) {
                 selectedData.forEach(dsName => {
                     const dsIndex = datasets.indexOf(dsName);
-                    algorithmTotal += foundItem.scores[dsIndex];
+                    if (dsIndex !== -1) {
+                        algorithmTotal += foundItem.scores[dsIndex];
+                    }
                 });
             }
         });
@@ -131,7 +135,7 @@ const Dashboard = () => {
 
             if (response.data.success) setStep(5);
         } catch (err) {
-            alert(err.response?.data?.message || "Database Error: Unauthorized or Session Expired.");
+            alert(err.response?.data?.message || "Connection Error: Check if Backend is running.");
         } finally {
             setIsLoading(false);
         }
@@ -142,9 +146,12 @@ const Dashboard = () => {
         window.location.href = `${BACKEND_URL}/auth/logout`;
     };
 
+    // Prevent rendering anything while checking auth to avoid flashes/errors
+    if (isCheckingAuth) return <div className="login-wrapper"><div className="page"><h2>Loading...</h2></div></div>;
+
     return (
         <div className="login-wrapper">
-             <button className="btn-secondary" onClick={handleLogout} style={{ position: 'absolute', top: 20, right: 20, width: 'auto', height: 40, padding: '0 20px', borderRadius: '10px' }}>
+             <button className="btn-secondary" onClick={handleLogout} style={{ position: 'absolute', top: 20, right: 20, width: 'auto', height: 40, padding: '0 20px', borderRadius: '10px', zIndex: 100 }}>
                 Logout
             </button>
 
@@ -171,7 +178,7 @@ const Dashboard = () => {
                             </span>
                         </div>
                         <div className="tiers-container" style={{ maxHeight: '400px', overflowY: 'auto', paddingRight: '10px' }}>
-                            {tiers.map((tier, idx) => (
+                            {tiers.map((tier) => (
                                 <div key={tier.title} className="tier-section" style={{ marginBottom: '2rem' }}>
                                     <h3 style={{ textAlign: 'left', color: 'var(--accent-secondary)', fontSize: '1.1rem', marginBottom: '1rem', borderBottom: '1px solid var(--glass-border)', paddingBottom: '5px' }}>{tier.title}</h3>
                                     <div className="grid-container" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '12px' }}>
@@ -185,7 +192,7 @@ const Dashboard = () => {
                         </div>
                         <div className="btn-flex" style={{ display: 'flex', gap: '15px', marginTop: '1.5rem' }}>
                             <button className="btn btn-secondary" onClick={() => setStep(1)}>Back</button>
-                            <button className="btn btn-primary" disabled={selectedBids.length < 4} onClick={() => setStep(3)}>Next Step</button>
+                            <button className="btn btn-primary" disabled={selectedBids.length < 1} onClick={() => setStep(3)}>Next Step</button>
                         </div>
                     </div>
                 )}
@@ -233,7 +240,7 @@ const Dashboard = () => {
                             <h1 style={{ fontSize: '3.5rem', color: 'white', fontWeight: '800' }}>{finalScore?.toFixed(2)}</h1>
                             <p style={{ color: 'var(--text-muted)', marginTop: '10px' }}>Final Score Saved</p>
                         </div>
-                        <button className="btn btn-primary" onClick={() => window.location.reload()}>Start Over</button>
+                        <button className="btn btn-primary" onClick={() => setStep(1)}>Start Over</button>
                     </div>
                 )}
             </div>
